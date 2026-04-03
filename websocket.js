@@ -1,21 +1,16 @@
 /**
- * websocket.js — Real-time telemetry WebSocket client
- *
- * - Sends vehicle telemetry to the backend
- * - Receives predicted/twin state from backend
- * - Simulates 100ms network latency for realism
+ * websocket.js — Fixed for Production Deployment
+ * Target: https://shadow-sim.onrender.com/ws
  */
 export class TelemetrySocket {
   constructor(opts = {}) {
-    // 🚀 Update: Render ka URL default set kar diya hai
-    // Agar local chalaoge toh opts.url mein localhost pass kar sakte ho
-    const defaultUrl = 'wss://shadow-sim.onrender.com/ws';
-    this.url = opts.url || defaultUrl;
+    // 🚀 FORCE FIX: Direct Render URL (No more localhost)
+    this.url = 'wss://shadow-sim.onrender.com/ws';
 
-    // ⚡ Update: Production par latency simulation off rakhenge
-    this.latencySim = opts.latencySim || false; 
-    this.latencyMs = opts.latencyMs || 100;
-    this.sendInterval = opts.sendInterval || 50;   // 20Hz
+    // ⚡ Production Settings
+    this.latencySim = false; // Turn off artificial delay for live web
+    this.latencyMs = 100;
+    this.sendInterval = 50;   // 20Hz updates
 
     this.ws = null;
     this.connected = false;
@@ -26,16 +21,26 @@ export class TelemetrySocket {
     this._pendingData = null;
     this._reconnectDelay = 2000;
 
+    // Start connection immediately
     this.connect();
   }
 
   connect() {
     try {
-      console.log(`Connecting to: ${this.url}`);
+      // Clear any existing connection
+      if (this.ws) {
+        this.ws.onopen = null;
+        this.ws.onmessage = null;
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.close();
+      }
+
+      console.log(`🚀 Connecting to Shadow Backend: ${this.url}`);
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
-        console.log("✅ Connected to Shadow Backend");
+        console.log("✅ LIVE: Connected to Render Backend");
         this.connected = true;
         this._reconnectDelay = 2000;
         if (this.onStatus) this.onStatus('connected');
@@ -48,18 +53,20 @@ export class TelemetrySocket {
           if (data.type === 'twin_update' && this.onTwinUpdate) {
             this.onTwinUpdate(data.state);
           }
-        } catch (_) {}
+        } catch (e) {
+          // Silently ignore malformed JSON
+        }
       };
 
       this.ws.onclose = () => {
-        console.log("❌ Disconnected from Shadow Backend");
+        console.log("❌ LIVE: Disconnected from Backend");
         this.connected = false;
         this._stopSendLoop();
         if (this.onStatus) this.onStatus('disconnected');
         
-        // Auto-reconnect logic
+        // Auto-reconnect with exponential backoff
         setTimeout(() => {
-          console.log("🔄 Attempting to reconnect...");
+          console.log("🔄 Attempting to reconnect to Render...");
           this.connect();
         }, this._reconnectDelay);
         
@@ -67,7 +74,7 @@ export class TelemetrySocket {
       };
 
       this.ws.onerror = (err) => {
-        console.error("⚠️ WebSocket Error:", err);
+        console.error("⚠️ WebSocket Connection Error:", err);
         if (this.onStatus) this.onStatus('error');
       };
 
@@ -81,36 +88,27 @@ export class TelemetrySocket {
    * Queue vehicle state for transmission
    */
   sendState(state) {
-    if (!state) return;
+    if (!state || !this.connected) return;
     this._pendingData = {
       type:      'telemetry',
       position:  { x: state.x, z: state.z },
-      velocity:  state.v,
+      velocity:  state.v || 0,
       steering_angle: state.steeringAngle || 0,
-      heading:   state.theta,
+      heading:   state.theta || 0,
       timestamp: Date.now(),
     };
   }
 
   _startSendLoop() {
-    this._stopSendLoop(); // Ensure no double loops
+    this._stopSendLoop(); 
     this._sendTimer = setInterval(() => {
       if (!this.connected || !this._pendingData) return;
       
       const payload = JSON.stringify(this._pendingData);
-      this._pendingData = null; // Clear after preparing payload
+      this._pendingData = null; 
 
-      if (this.latencySim) {
-        const jitter = (Math.random() - 0.5) * 20;
-        setTimeout(() => {
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(payload);
-          }
-        }, this.latencyMs + jitter);
-      } else {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(payload);
-        }
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(payload);
       }
     }, this.sendInterval);
   }
