@@ -5,20 +5,24 @@
  * - Receives predicted/twin state from backend
  * - Simulates 100ms network latency for realism
  */
-
 export class TelemetrySocket {
   constructor(opts = {}) {
-    this.url          = opts.url || 'ws://localhost:8000/ws';
-    this.latencySim   = opts.latencySim !== false; // simulate 100ms delay
-    this.latencyMs    = opts.latencyMs || 100;
-    this.sendInterval = opts.sendInterval || 50;   // ms between sends (20Hz)
+    // 🚀 Update: Render ka URL default set kar diya hai
+    // Agar local chalaoge toh opts.url mein localhost pass kar sakte ho
+    const defaultUrl = 'wss://shadow-sim.onrender.com/ws';
+    this.url = opts.url || defaultUrl;
 
-    this.ws           = null;
-    this.connected    = false;
+    // ⚡ Update: Production par latency simulation off rakhenge
+    this.latencySim = opts.latencySim || false; 
+    this.latencyMs = opts.latencyMs || 100;
+    this.sendInterval = opts.sendInterval || 50;   // 20Hz
+
+    this.ws = null;
+    this.connected = false;
     this.onTwinUpdate = null;  // callback(twinState)
-    this.onStatus     = null;  // callback('connected' | 'disconnected' | 'error')
+    this.onStatus = null;      // callback('connected' | 'disconnected' | 'error')
 
-    this._sendTimer   = null;
+    this._sendTimer = null;
     this._pendingData = null;
     this._reconnectDelay = 2000;
 
@@ -27,9 +31,11 @@ export class TelemetrySocket {
 
   connect() {
     try {
+      console.log(`Connecting to: ${this.url}`);
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
+        console.log("✅ Connected to Shadow Backend");
         this.connected = true;
         this._reconnectDelay = 2000;
         if (this.onStatus) this.onStatus('connected');
@@ -46,19 +52,27 @@ export class TelemetrySocket {
       };
 
       this.ws.onclose = () => {
+        console.log("❌ Disconnected from Shadow Backend");
         this.connected = false;
         this._stopSendLoop();
         if (this.onStatus) this.onStatus('disconnected');
-        // Auto-reconnect
-        setTimeout(() => this.connect(), this._reconnectDelay);
+        
+        // Auto-reconnect logic
+        setTimeout(() => {
+          console.log("🔄 Attempting to reconnect...");
+          this.connect();
+        }, this._reconnectDelay);
+        
         this._reconnectDelay = Math.min(10000, this._reconnectDelay * 1.5);
       };
 
-      this.ws.onerror = () => {
+      this.ws.onerror = (err) => {
+        console.error("⚠️ WebSocket Error:", err);
         if (this.onStatus) this.onStatus('error');
       };
 
     } catch (e) {
+      console.error("Critical Connection Error:", e);
       setTimeout(() => this.connect(), this._reconnectDelay);
     }
   }
@@ -67,32 +81,36 @@ export class TelemetrySocket {
    * Queue vehicle state for transmission
    */
   sendState(state) {
+    if (!state) return;
     this._pendingData = {
       type:      'telemetry',
       position:  { x: state.x, z: state.z },
       velocity:  state.v,
-      steering_angle: state.steeringAngle,
+      steering_angle: state.steeringAngle || 0,
       heading:   state.theta,
       timestamp: Date.now(),
     };
   }
 
   _startSendLoop() {
+    this._stopSendLoop(); // Ensure no double loops
     this._sendTimer = setInterval(() => {
       if (!this.connected || !this._pendingData) return;
+      
       const payload = JSON.stringify(this._pendingData);
-      this._pendingData = null;
+      this._pendingData = null; // Clear after preparing payload
 
       if (this.latencySim) {
-        // Simulate network latency
-        const jitter = (Math.random() - 0.5) * 20; // ±10ms jitter
+        const jitter = (Math.random() - 0.5) * 20;
         setTimeout(() => {
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(payload);
           }
         }, this.latencyMs + jitter);
       } else {
-        this.ws.send(payload);
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(payload);
+        }
       }
     }, this.sendInterval);
   }
@@ -111,9 +129,7 @@ export class TelemetrySocket {
 }
 
 /**
- * LocalTwin — fallback when backend is unavailable.
- * Applies dead-reckoning locally using the same algorithm
- * so the twin still works offline.
+ * LocalTwin — fallback for offline/local prediction
  */
 export class LocalTwin {
   constructor(physicsEngine) {
