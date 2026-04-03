@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shadow-Sim | Real-Time Vehicle Digital Twin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      overflow: hidden;
+    }
+
+    #canvas-container {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+    }
+
+    canvas { display: block; }
+
+    /* ── HUD Overlay ── */
+    #hud {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Top title bar */
+    #title-bar {
+      position: absolute;
+      top: 0; left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, rgba(0,255,180,0.12), rgba(0,120,255,0.08));
+      border-bottom: 1px solid rgba(0,255,180,0.25);
+      padding: 8px 40px;
+      text-align: center;
+      backdrop-filter: blur(6px);
+    }
+    #title-bar h1 {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: #00ffb4;
+      text-shadow: 0 0 12px rgba(0,255,180,0.6);
+    }
+    #title-bar span {
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: rgba(0,255,180,0.5);
+    }
+
+    /* Left panel - telemetry */
+    #telemetry-panel {
+      position: absolute;
+      top: 60px; left: 16px;
+      background: rgba(6, 10, 18, 0.85);
+      border: 1px solid rgba(0,255,180,0.2);
+      border-radius: 4px;
+      padding: 14px 18px;
+      min-width: 200px;
+      backdrop-filter: blur(8px);
+    }
+    .panel-title {
+      font-size: 9px;
+      letter-spacing: 3px;
+      color: #00ffb4;
+      margin-bottom: 12px;
+      border-bottom: 1px solid rgba(0,255,180,0.15);
+      padding-bottom: 6px;
+    }
+    .telemetry-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 11px;
+    }
+    .tel-label { color: rgba(200,200,200,0.5); font-size: 9px; letter-spacing: 1px; }
+    .tel-value { color: #00ffb4; font-weight: bold; font-size: 13px; }
+    .tel-value.warn { color: #ff6b35; }
+    .tel-value.critical { color: #ff2244; animation: blink 0.4s infinite; }
+
+    /* Speed gauge */
+    .gauge-bar {
+      height: 3px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 2px;
+      margin-top: 3px;
+      overflow: hidden;
+    }
+    .gauge-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.1s, background 0.1s;
+    }
+
+    /* Status badge */
+    #status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9px;
+      letter-spacing: 2px;
+      padding: 4px 10px;
+      border-radius: 2px;
+      margin-top: 10px;
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      animation: pulse 1.2s infinite;
+    }
+    .status-ok   { background: rgba(0,255,180,0.15); border: 1px solid rgba(0,255,180,0.3); color: #00ffb4; }
+    .status-ok   .status-dot { background: #00ffb4; }
+    .status-warn { background: rgba(255,107,53,0.15); border: 1px solid rgba(255,107,53,0.4); color: #ff6b35; }
+    .status-warn .status-dot { background: #ff6b35; }
+    .status-crit { background: rgba(255,34,68,0.15); border: 1px solid rgba(255,34,68,0.4); color: #ff2244; }
+    .status-crit .status-dot { background: #ff2244; }
+
+    /* Right panel - controls & twin info */
+    #info-panel {
+      position: absolute;
+      top: 60px; right: 16px;
+      background: rgba(6, 10, 18, 0.85);
+      border: 1px solid rgba(0,120,255,0.2);
+      border-radius: 4px;
+      padding: 14px 18px;
+      min-width: 200px;
+      backdrop-filter: blur(8px);
+    }
+    #info-panel .panel-title { color: #4488ff; border-color: rgba(68,136,255,0.15); }
+    .control-key {
+      display: inline-block;
+      background: rgba(68,136,255,0.12);
+      border: 1px solid rgba(68,136,255,0.3);
+      border-radius: 3px;
+      padding: 2px 7px;
+      font-size: 10px;
+      color: #4488ff;
+      margin-right: 6px;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 7px;
+      font-size: 10px;
+      color: rgba(200,200,200,0.5);
+    }
+
+    /* Twin position display */
+    .twin-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      font-size: 10px;
+    }
+    .twin-label { color: rgba(200,200,200,0.4); font-size: 9px; }
+    .twin-val   { color: #4488ff; }
+
+    /* Bottom minimap */
+    #minimap {
+      position: absolute;
+      bottom: 16px; right: 16px;
+      width: 160px; height: 160px;
+      background: rgba(6,10,18,0.9);
+      border: 1px solid rgba(0,255,180,0.2);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #minimap canvas { width: 100%; height: 100%; }
+    #minimap-title {
+      position: absolute;
+      top: 4px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 8px;
+      letter-spacing: 2px;
+      color: rgba(0,255,180,0.4);
+    }
+
+    /* Bottom controls bar */
+    #bottom-bar {
+      position: absolute;
+      bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      pointer-events: all;
+    }
+    .btn {
+      background: rgba(6,10,18,0.9);
+      border: 1px solid rgba(0,255,180,0.25);
+      color: #00ffb4;
+      padding: 8px 18px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      letter-spacing: 2px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      background: rgba(0,255,180,0.1);
+      border-color: rgba(0,255,180,0.5);
+      box-shadow: 0 0 12px rgba(0,255,180,0.2);
+    }
+    .btn.active {
+      background: rgba(0,255,180,0.15);
+      border-color: #00ffb4;
+    }
+    .btn.danger {
+      border-color: rgba(255,34,68,0.3);
+      color: #ff2244;
+    }
+    .btn.danger:hover {
+      background: rgba(255,34,68,0.1);
+      border-color: rgba(255,34,68,0.6);
+    }
+
+    /* WebSocket indicator */
+    #ws-indicator {
+      position: absolute;
+      top: 16px; right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: rgba(200,200,200,0.4);
+    }
+    #ws-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #555;
+    }
+    #ws-dot.connected { background: #00ffb4; animation: pulse 1.4s infinite; }
+    #ws-dot.error     { background: #ff2244; animation: blink 0.5s infinite; }
+
+    /* Replay panel */
+    #replay-panel {
+      position: absolute;
+      bottom: 60px; left: 16px;
+      background: rgba(6,10,18,0.85);
+      border: 1px solid rgba(255,200,0,0.2);
+      border-radius: 4px;
+      padding: 12px 16px;
+      min-width: 200px;
+      display: none;
+      backdrop-filter: blur(8px);
+    }
+    #replay-panel .panel-title { color: #ffc800; border-color: rgba(255,200,0,0.15); }
+    #replay-slider {
+      width: 100%;
+      margin: 8px 0;
+      accent-color: #ffc800;
+    }
+    #replay-info { font-size: 10px; color: rgba(200,200,200,0.5); }
+
+    /* Stress heatmap legend */
+    #heatmap-legend {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%) translateX(-120px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 9px;
+      letter-spacing: 1px;
+    }
+    .hm-grad {
+      width: 80px; height: 6px;
+      border-radius: 3px;
+      background: linear-gradient(to right, #00ff88, #ffff00, #ff4400);
+    }
+    .hm-label { color: rgba(200,200,200,0.35); }
+
+    /* Animations */
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.3; }
+    }
+    @keyframes blink {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0; }
+    }
+
+    /* Collision flash */
+    #collision-flash {
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 30, 30, 0.35);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.05s;
+      z-index: 20;
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<div id="collision-flash"></div>
+
+<div id="hud">
+  <!-- Title -->
+  <div id="title-bar">
+    <h1>SHADOW-SIM</h1>
+    <div><span>REAL-TIME VEHICLE DIGITAL TWIN PLATFORM</span></div>
+  </div>
+
+  <!-- WS indicator -->
+  <div id="ws-indicator">
+    <div id="ws-dot"></div>
+    <span id="ws-status">OFFLINE</span>
+  </div>
+
+  <!-- Telemetry -->
+  <div id="telemetry-panel">
+    <div class="panel-title">◈ TELEMETRY — REAL VEHICLE</div>
+
+    <div class="telemetry-row">
+      <span class="tel-label">SPEED</span>
+      <span class="tel-value" id="tel-speed">0.0</span>
+    </div>
+    <div class="gauge-bar"><div class="gauge-fill" id="gauge-speed" style="width:0%;background:#00ffb4"></div></div>
+
+    <div class="telemetry-row" style="margin-top:10px">
+      <span class="tel-label">STEERING</span>
+      <span class="tel-value" id="tel-steer">0.0°</span>
+    </div>
+    <div class="gauge-bar"><div class="gauge-fill" id="gauge-steer" style="width:50%;background:#4488ff"></div></div>
+
+    <div class="telemetry-row" style="margin-top:10px">
+      <span class="tel-label">HEADING</span>
+      <span class="tel-value" id="tel-heading">0°</span>
+    </div>
+
+    <div class="telemetry-row">
+      <span class="tel-label">POSITION X</span>
+      <span class="tel-value" id="tel-x">0.0</span>
+    </div>
+    <div class="telemetry-row">
+      <span class="tel-label">POSITION Z</span>
+      <span class="tel-value" id="tel-z">0.0</span>
+    </div>
+
+    <div class="telemetry-row" style="margin-top:8px">
+      <span class="tel-label">STRESS INDEX</span>
+      <span class="tel-value" id="tel-stress">0.0</span>
+    </div>
+    <div class="gauge-bar"><div class="gauge-fill" id="gauge-stress" style="width:0%;background:#00ff88"></div></div>
+
+    <div id="status-badge" class="status-ok">
+      <div class="status-dot"></div>
+      <span id="status-text">NOMINAL</span>
+    </div>
+  </div>
+
+  <!-- Info/Controls -->
+  <div id="info-panel">
+    <div class="panel-title">◈ CONTROLS</div>
+    <div class="control-row"><span class="control-key">W</span>Accelerate</div>
+    <div class="control-row"><span class="control-key">S</span>Brake / Reverse</div>
+    <div class="control-row"><span class="control-key">A</span>Steer Left</div>
+    <div class="control-row"><span class="control-key">D</span>Steer Right</div>
+    <div class="control-row"><span class="control-key">R</span>Reset Position</div>
+    <div class="control-row"><span class="control-key">C</span>Toggle Camera</div>
+
+    <div class="panel-title" style="margin-top:14px">◈ DIGITAL TWIN</div>
+    <div class="twin-row">
+      <span class="twin-label">TWIN X</span>
+      <span class="twin-val" id="twin-x">—</span>
+    </div>
+    <div class="twin-row">
+      <span class="twin-label">TWIN Z</span>
+      <span class="twin-val" id="twin-z">—</span>
+    </div>
+    <div class="twin-row">
+      <span class="twin-label">LAG</span>
+      <span class="twin-val" id="twin-lag">—</span>
+    </div>
+    <div class="twin-row">
+      <span class="twin-label">PREDICTION</span>
+      <span class="twin-val" id="twin-pred">DEAD RECK.</span>
+    </div>
+  </div>
+
+  <!-- Minimap -->
+  <div id="minimap">
+    <div id="minimap-title">MINIMAP</div>
+    <canvas id="minimap-canvas" width="160" height="160"></canvas>
+  </div>
+
+  <!-- Replay Panel -->
+  <div id="replay-panel">
+    <div class="panel-title">◈ REPLAY MODE</div>
+    <div id="replay-info">Frame: <span id="replay-frame">0</span> / <span id="replay-total">0</span></div>
+    <input type="range" id="replay-slider" min="0" value="0" />
+  </div>
+
+  <!-- Bottom buttons -->
+  <div id="bottom-bar">
+    <button class="btn" id="btn-replay" onclick="toggleReplay()">⏺ RECORD</button>
+    <button class="btn" id="btn-twin" onclick="toggleTwin()">👥 TWIN ON</button>
+    <button class="btn" id="btn-heatmap" onclick="toggleHeatmap()">🔥 HEATMAP</button>
+    <button class="btn danger" onclick="resetVehicle()">↺ RESET</button>
+  </div>
+
+  <!-- Heatmap legend -->
+  <div id="heatmap-legend">
+    <span class="hm-label">LOW STRESS</span>
+    <div class="hm-grad"></div>
+    <span class="hm-label">HIGH STRESS</span>
+  </div>
+</div>
+
+<!-- Three.js via CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script type="module" src="main.js"></script>
+
+</body>
+</html>

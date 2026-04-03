@@ -1,0 +1,36 @@
+# Note: 'version' line hata di hai kyunki naye Docker mein ye obsolete hai
+services:
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend # Alag naam taaki mix na ho
+    container_name: shadow-sim-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    # Healthcheck tabhi chalega agar container mein 'curl' installed ho
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend static server ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend # Alag naam taaki mix na ho
+    container_name: shadow-sim-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+networks:
+  default:
+    name: shadow-sim-net
